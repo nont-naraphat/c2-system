@@ -1,13 +1,18 @@
-version: '3'
+version: '3.8'
+
 services:
   c2-server:
-    build: ./
+    build: .
     ports:
-      - "8080:8080"
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
     restart: always
     environment:
       - TZ=Asia/Bangkok
-    volumes:
-      - c2-system_logs:/root/logs
-volumes:
-  c2-system_logs:
+    networks:
+      - c2-network
+
+networks:
+  c2-network:
+    driver: bridge
