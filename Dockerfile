@@ -1,8 +1,14 @@
-FROM golang:alpine AS builder
-WORKDIR /app
-COPY client.go .
-RUN go build -ldflags="-s -w" -o client client.go
+# ใช้ Image ของ Python แทน Go
+FROM python:3.9-slim
 
-FROM alpine:latest
-COPY --from=builder /app/client /client
-CMD ["/client"]
+# ตั้งค่า Working Directory
+WORKDIR /app
+
+# คัดลอกไฟล์ server.py เข้าไปใน Container
+COPY server.py .
+
+# เปิด Port 8080
+EXPOSE 8080
+
+# คำสั่งรันโปรแกรม
+CMD ["python", "server.py"]
