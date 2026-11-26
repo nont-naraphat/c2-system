@@ -9,3 +9,5 @@ services:
       - TZ=Asia/Bangkok
     volumes:
       - c2-system_logs:/root/logs
+volumes:
+  c2-system_logs:
